@@ -1,1 +1,234 @@
-loadstring(game:HttpGet("https://api.project-reverse.org/run/eyJpZCI6IjZkZGI0NTFiLTQ4YzYtNDc5Ni1hMTExLWUxNDc3NjNjMTM0ZiIsImtpbmQiOiJsb2FkZXIifQ"))()
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+
+local KEEP_OWN_CHARACTER = true
+local HIDE_OTHER_PLAYERS = true
+local HIDE_LOOSE_PARTS = false
+local KEEP_FOLDERS = {"Coins"}
+local TOGGLE_KEY = Enum.KeyCode.H
+
+local EFFECTS = {
+	ParticleEmitter = true,
+	Trail = true,
+	Beam = true,
+	Fire = true,
+	Smoke = true,
+	Sparkles = true,
+}
+
+local enabled = false
+local token = 0
+local saved = {}
+local addedConn
+local savedShadows
+
+local function setProp(inst, prop, value)
+	local data = saved[inst]
+	if not data then
+		data = {}
+		saved[inst] = data
+	end
+	if data[prop] == nil then
+		data[prop] = inst[prop]
+	end
+	inst[prop] = value
+end
+
+local function restoreOne(inst)
+	local data = saved[inst]
+	if not data then
+		return
+	end
+	pcall(function()
+		for prop, value in pairs(data) do
+			inst[prop] = value
+		end
+	end)
+	saved[inst] = nil
+end
+
+local function restoreAll()
+	for inst in pairs(saved) do
+		restoreOne(inst)
+	end
+end
+
+local function isKept(inst)
+	local character = player.Character
+	if KEEP_OWN_CHARACTER and character and inst:IsDescendantOf(character) then
+		return true
+	end
+
+	if not HIDE_OTHER_PLAYERS then
+		for _, other in ipairs(Players:GetPlayers()) do
+			local c = other.Character
+			if c and inst:IsDescendantOf(c) then
+				return true
+			end
+		end
+	end
+
+	for _, name in ipairs(KEEP_FOLDERS) do
+		local folder = workspace:FindFirstChild(name)
+		if folder and inst:IsDescendantOf(folder) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function shouldHidePart(part)
+	if part:IsA("Terrain") then
+		return false
+	end
+	if isKept(part) then
+		return false
+	end
+	if not HIDE_LOOSE_PARTS and not part:FindFirstAncestorOfClass("Model") then
+		return false
+	end
+	return true
+end
+
+local function hide(inst)
+	pcall(function()
+		if inst:IsA("BasePart") then
+			if shouldHidePart(inst) then
+				setProp(inst, "LocalTransparencyModifier", 1)
+				setProp(inst, "CastShadow", false)
+			end
+		elseif inst:IsA("Decal") then
+			local part = inst:FindFirstAncestorWhichIsA("BasePart")
+			if part and shouldHidePart(part) then
+				setProp(inst, "Transparency", 1)
+			end
+		elseif EFFECTS[inst.ClassName] then
+			local part = inst:FindFirstAncestorWhichIsA("BasePart")
+			if part and shouldHidePart(part) then
+				setProp(inst, "Enabled", false)
+			end
+		end
+	end)
+end
+
+local function setLighting(on)
+	local terrain = workspace:FindFirstChildOfClass("Terrain")
+	if on then
+		savedShadows = Lighting.GlobalShadows
+		Lighting.GlobalShadows = false
+		if terrain then
+			pcall(setProp, terrain, "Decoration", false)
+		end
+	else
+		if savedShadows ~= nil then
+			Lighting.GlobalShadows = savedShadows
+			savedShadows = nil
+		end
+	end
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "OptimizeGui"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 210, 0, 44)
+button.Position = UDim2.new(0, 16, 1, -64)
+button.BackgroundColor3 = Color3.fromRGB(24, 14, 44)
+button.BackgroundTransparency = 0.2
+button.TextColor3 = Color3.fromRGB(246, 240, 255)
+button.Font = Enum.Font.GothamBold
+button.TextSize = 16
+button.AutoButtonColor = false
+button.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = button
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(196, 120, 255)
+stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+stroke.Parent = button
+
+local function updateButton()
+	if enabled then
+		button.Text = "Оптимизация: вкл"
+		TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(88, 50, 160)}):Play()
+	else
+		button.Text = "Оптимизация: выкл"
+		TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(24, 14, 44)}):Play()
+	end
+end
+
+local function setEnabled(state)
+	enabled = state
+	token += 1
+	local current = token
+
+	if addedConn then
+		addedConn:Disconnect()
+		addedConn = nil
+	end
+
+	if state then
+		setLighting(true)
+
+		addedConn = workspace.DescendantAdded:Connect(function(inst)
+			task.defer(hide, inst)
+		end)
+
+		task.spawn(function()
+			local n = 0
+			for _, inst in ipairs(workspace:GetDescendants()) do
+				if current ~= token then
+					return
+				end
+				hide(inst)
+				n += 1
+				if n % 250 == 0 then
+					task.wait()
+				end
+			end
+		end)
+	else
+		restoreAll()
+		setLighting(false)
+	end
+
+	updateButton()
+end
+
+button.MouseButton1Click:Connect(function()
+	setEnabled(not enabled)
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == TOGGLE_KEY then
+		setEnabled(not enabled)
+	end
+end)
+
+player.CharacterAdded:Connect(function(character)
+	if not enabled or not KEEP_OWN_CHARACTER then
+		return
+	end
+	task.wait(0.3)
+	for inst in pairs(saved) do
+		if inst:IsDescendantOf(character) then
+			restoreOne(inst)
+		end
+	end
+end)
+
+updateButton()
